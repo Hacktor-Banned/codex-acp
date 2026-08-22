@@ -2697,6 +2697,16 @@ export class CodexAcpServer {
                     activePrompt.signal,
                 );
             }
+            // Codex derives its fallback title from the first prompt after
+            // thread/start. Some versions overwrite a name set during
+            // session/new, so reassert the explicit out-of-band title after
+            // prompt processing has finished.
+            if (sessionState.sessionTitleSource === "explicit" && sessionState.sessionTitle) {
+                await this.codexAcpClient.persistSessionTitle(
+                    sessionState.sessionId,
+                    sessionState.sessionTitle,
+                );
+            }
             logger.log("Prompt completed", {sessionId: params.sessionId});
             await eventHandler?.dispose();
             disposePromptRequestCancellation();

@@ -35,12 +35,16 @@ describe("explicit session title over a real ACP connection", () => {
         });
     });
 
-    it("does not follow the requested title with a prompt-derived one", async () => {
-        await withConnectedClient(async (ctx) => {
+    it("reapplies the requested title after the prompt-derived fallback can run", async () => {
+        await withConnectedClient(async (ctx, appServerClient) => {
             const session = await startSession(ctx, {sessionTitle});
             await expect(nextSessionTitle(session)).resolves.toBe(sessionTitle);
 
             expect(await sessionTitlesDuringPrompt(session)).toEqual([]);
+            expect(vi.mocked(appServerClient.threadSetName).mock.calls.map(([params]) => params)).toEqual([
+                {threadId, name: sessionTitle},
+                {threadId, name: sessionTitle},
+            ]);
         });
     });
 });
@@ -81,7 +85,9 @@ async function sessionTitlesDuringPrompt(session: acp.ActiveSession): Promise<un
  * Runs `op` against a real ACP connection to a `CodexAcpServer` whose Codex
  * side is stubbed at the wrapper level.
  */
-async function withConnectedClient(op: (ctx: acp.ClientContext) => Promise<void>): Promise<void> {
+async function withConnectedClient(
+    op: (ctx: acp.ClientContext, appServerClient: CodexAppServerClient) => Promise<void>,
+): Promise<void> {
     const codexConnection = createMockCodexConnection();
     const appServerClient = new CodexAppServerClient(codexConnection.connection);
     const codexAcpClient = new CodexAcpClient(appServerClient);
@@ -125,6 +131,6 @@ async function withConnectedClient(op: (ctx: acp.ClientContext) => Promise<void>
 
     await acp.client({name: "ordering-test-client"}).connectWith(agentApp, async (ctx) => {
         await ctx.request(acp.methods.agent.initialize, {protocolVersion: acp.PROTOCOL_VERSION});
-        await op(ctx);
+        await op(ctx, appServerClient);
     });
 }
