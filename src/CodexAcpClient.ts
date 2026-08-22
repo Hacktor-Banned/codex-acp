@@ -556,12 +556,20 @@ export class CodexAcpClient {
     ): Promise<string | null> {
         const title = readMetaSessionTitle(meta);
         if (!title) return null;
+        return await this.persistSessionTitle(threadId, title) ? title : null;
+    }
+
+    /**
+     * Persist an explicit title without making session creation or a prompt
+     * fail when the installed Codex version rejects the cosmetic request.
+     */
+    async persistSessionTitle(threadId: string, title: string): Promise<boolean> {
         try {
             await this.codexClient.threadSetName({threadId, name: title});
-            return title;
+            return true;
         } catch (err) {
             logger.error(`Failed to set thread name for ${threadId}`, err);
-            return null;
+            return false;
         }
     }
 
