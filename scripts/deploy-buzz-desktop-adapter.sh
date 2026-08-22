@@ -63,6 +63,7 @@ stop_buzz() {
         fail 'Buzz ACP processes are still running'
     fi
     pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1 && fail 'Buzz did not stop cleanly'
+    return 0
 }
 
 start_buzz() {
