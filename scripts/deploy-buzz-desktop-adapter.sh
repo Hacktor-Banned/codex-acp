@@ -26,6 +26,29 @@ resolve_runtime() {
     [[ -n "$node_bin" && -x "$node_bin" ]] || fail 'Buzz Node runtime not found'
 }
 
+acp_processes_running() {
+    local pattern
+
+    for pattern in \
+        "$buzz_app/Contents/MacOS/buzz-acp( |$)" \
+        "$node_tools/bin/codex-acp( |$)" \
+        "$installed_package/dist/index.js( |$)"; do
+        pgrep -f "$pattern" >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
+report_acp_processes() {
+    local pattern
+
+    for pattern in \
+        "$buzz_app/Contents/MacOS/buzz-acp( |$)" \
+        "$node_tools/bin/codex-acp( |$)" \
+        "$installed_package/dist/index.js( |$)"; do
+        pgrep -fal "$pattern" >&2 || true
+    done
+}
+
 stop_buzz() {
     if pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1; then
         osascript -e 'tell application "Buzz" to quit' >/dev/null
@@ -35,8 +58,8 @@ stop_buzz() {
         done
     fi
 
-    if pgrep -f '(^|/)(buzz-acp|codex-acp)( |$)' >/dev/null 2>&1; then
-        pgrep -fal '(^|/)(buzz-acp|codex-acp)( |$)' >&2 || true
+    if acp_processes_running; then
+        report_acp_processes
         fail 'Buzz ACP processes are still running'
     fi
     pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1 && fail 'Buzz did not stop cleanly'
