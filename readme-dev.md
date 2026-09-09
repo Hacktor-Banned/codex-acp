@@ -84,3 +84,49 @@ npm run package:all
 1. Update the `@openai/codex` version in `package.json` (under `dependencies`).
 2. Regenerate Codex types in `src/app-server/`: `npm run generate-types`
 3. Ensure there are no type errors or failed tests: `npm run typecheck` and `npm run test`
+
+
+## Local Studio installation for Buzz
+
+Select a reviewed commit in a clean checkout on the Studio. Build and check it
+locally with the existing Buzz-managed Node runtime (`npm ci`,
+`npm run typecheck`, `npm test`, `npm run build`). This is an operator action;
+GitHub does not execute PR code in the personal macOS account.
+
+Assemble the complete runtime in a new staging directory:
+
+```bash
+staging_root="$(mktemp -d -t codex-acp-install)"
+runtime_tree="$staging_root/runtime"
+mkdir "$runtime_tree"
+cp package.json package-lock.json README.md LICENSE "$runtime_tree/"
+cp -R dist "$runtime_tree/"
+(cd "$runtime_tree" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+```
+
+Finish existing ACP sessions and quit Buzz normally before installation. The
+script rejects a running Buzz/adapter and makes no attempt to stop processes.
+Run as `tobiasschluter` on the arm64 Studio with the full selected commit:
+
+```bash
+SOURCE_SHA=<full-reviewed-commit> STAGING_ROOT="$staging_root" \
+  DEPLOY_TREE="$runtime_tree" scripts/deploy-buzz-desktop-adapter.sh deploy
+```
+
+The installer requires a clean tracked source tree, verifies the runtime against
+the selected build, preserves the complete previous package under Buzz's
+`adapter-backups/codex-acp`, and reports the backup name, installed version and
+bundle SHA256. On installation failure it restores the previous package. Open
+Buzz normally after success and verify the real ACP client before retiring the
+old runner. No authentication or application data is replaced.
+
+To roll back, quit Buzz and use a fresh staging directory plus the reported
+backup name. The current installation is retained as another backup:
+
+```bash
+SOURCE_SHA=<full-reviewed-commit> STAGING_ROOT="$(mktemp -d -t codex-acp-rollback)" \
+  BACKUP_NAME=<reported-backup-name> scripts/deploy-buzz-desktop-adapter.sh rollback
+```
+
+The commit selects the installer source; rollback selects the preserved runtime.
+Inspect a failed staging tree before removing it. There is no automatic pruning.

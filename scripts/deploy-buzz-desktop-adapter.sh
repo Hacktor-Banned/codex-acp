@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly expected_runner='mac-studio-buzz-codex-acp'
+readonly expected_user='tobiasschluter'
+source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly source_root
 readonly buzz_app='/Applications/Buzz.app'
 readonly buzz_root='/Users/tobiasschluter/Library/Application Support/Buzz'
 readonly node_tools="$buzz_root/node-tools"
@@ -12,6 +14,8 @@ readonly backup_root="$buzz_root/adapter-backups/codex-acp"
 operation="${1:-}"
 deploy_tree="${DEPLOY_TREE:-}"
 requested_backup="${BACKUP_NAME:-}"
+staging_root="${STAGING_ROOT:-}"
+source_sha="${SOURCE_SHA:-}"
 automatic_rollback=''
 backup_name=''
 node_bin=''
@@ -38,43 +42,6 @@ acp_processes_running() {
     return 1
 }
 
-report_acp_processes() {
-    local pattern
-
-    for pattern in \
-        "$buzz_app/Contents/MacOS/buzz-acp( |$)" \
-        "$node_tools/bin/codex-acp( |$)" \
-        "$installed_package/dist/index.js( |$)"; do
-        pgrep -fal "$pattern" >&2 || true
-    done
-}
-
-stop_buzz() {
-    if pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1; then
-        osascript -e 'tell application "Buzz" to quit' >/dev/null
-        for _ in $(seq 1 30); do
-            pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1 || break
-            sleep 1
-        done
-    fi
-
-    if acp_processes_running; then
-        report_acp_processes
-        fail 'Buzz ACP processes are still running'
-    fi
-    pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1 && fail 'Buzz did not stop cleanly'
-    return 0
-}
-
-start_buzz() {
-    open -a Buzz
-    for _ in $(seq 1 30); do
-        pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1 && return 0
-        sleep 1
-    done
-    fail 'Buzz did not start after adapter installation'
-}
-
 backup_current_installation() {
     local reason="$1"
     local timestamp
@@ -82,17 +49,18 @@ backup_current_installation() {
     [[ -d "$installed_package" && -f "$installed_package/package.json" ]] || fail 'installed codex-acp package is missing'
     mkdir -p "$backup_root"
     timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
-    backup_name="codex-acp-${reason}-${timestamp}-${GITHUB_SHA:0:12}"
+    backup_name="codex-acp-${reason}-${timestamp}-${source_sha:0:12}"
     [[ ! -e "$backup_root/$backup_name" ]] || fail 'rollback directory already exists'
     mv "$installed_package" "$backup_root/$backup_name"
     automatic_rollback="$backup_root/$backup_name"
 }
 
 validate_deploy_tree() {
-    [[ -n "$deploy_tree" && -d "$deploy_tree" ]] || fail 'deployment runtime tree is missing'
+    [[ -n "$deploy_tree" && -d "$deploy_tree" && ! -L "$deploy_tree" ]] || fail 'deployment runtime tree is missing or symlinked'
+    deploy_tree="$(cd "$deploy_tree" && pwd -P)"
     case "$deploy_tree" in
-        "$RUNNER_TEMP"/*) ;;
-        *) fail 'deployment runtime tree must come from this runner job' ;;
+        "$staging_root"/*) ;;
+        *) fail 'deployment runtime tree must be inside the selected staging directory' ;;
     esac
     [[ -f "$deploy_tree/package.json" ]] || fail 'deployment package metadata is missing'
     [[ -f "$deploy_tree/dist/index.js" ]] || fail 'deployment bundle is missing'
@@ -105,7 +73,7 @@ prepare_rollback_tree() {
     [[ "$requested_backup" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'rollback backup name is invalid'
     source_backup="$backup_root/$requested_backup"
     [[ -d "$source_backup" ]] || fail 'requested rollback backup does not exist'
-    deploy_tree="$RUNNER_TEMP/codex-acp-rollback"
+    deploy_tree="$staging_root/codex-acp-rollback"
     [[ ! -e "$deploy_tree" ]] || fail 'rollback staging directory already exists'
     ditto "$source_backup" "$deploy_tree"
     validate_deploy_tree
@@ -130,10 +98,8 @@ install_tree() {
     installed_version="$("$node_bin" -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(p.version)' "$installed_package/package.json")"
     [[ -n "$installed_version" ]] || fail 'installed package version is empty'
 
-    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-        echo "installed_version=$installed_version" >> "$GITHUB_OUTPUT"
-        echo "installed_sha256=$installed_sha" >> "$GITHUB_OUTPUT"
-    fi
+    echo "installed_version=$installed_version"
+    echo "installed_sha256=$installed_sha"
 }
 
 restore_automatically() {
@@ -143,7 +109,7 @@ restore_automatically() {
     set +e
     if [[ -n "$automatic_rollback" && -d "$automatic_rollback" ]]; then
         echo 'deployment failed; restoring the pre-deploy package' >&2
-        failed_tree="$RUNNER_TEMP/codex-acp-failed"
+        failed_tree="$staging_root/codex-acp-failed"
         if [[ -d "$installed_package" && ! -e "$failed_tree" ]]; then
             mv "$installed_package" "$failed_tree"
         fi
@@ -151,12 +117,15 @@ restore_automatically() {
             mv "$automatic_rollback" "$installed_package"
         fi
     fi
-    open -a Buzz >/dev/null 2>&1
     exit "$exit_code"
 }
 
-[[ "${GITHUB_ACTIONS:-}" == 'true' ]] || fail 'deployment is restricted to GitHub Actions'
-[[ "${RUNNER_NAME:-}" == "$expected_runner" ]] || fail "unexpected runner: ${RUNNER_NAME:-unset}"
+[[ "$(id -un)" == "$expected_user" ]] || fail 'run as the Studio owner'
+[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || fail 'SOURCE_SHA must select a full commit'
+[[ "$(git -C "$source_root" rev-parse HEAD)" == "$source_sha" ]] || fail 'selected source commit does not match this checkout'
+git -C "$source_root" diff --quiet HEAD -- || fail 'tracked source changes are not committed'
+[[ -n "$staging_root" && -d "$staging_root" && ! -L "$staging_root" ]] || fail 'STAGING_ROOT must select a real staging directory'
+staging_root="$(cd "$staging_root" && pwd -P)"
 [[ "$(uname -s)" == 'Darwin' && "$(uname -m)" == 'arm64' ]] || fail 'deployment requires macOS arm64'
 [[ -d "$buzz_app" && -d "$buzz_root" ]] || fail 'Buzz installation is missing'
 case "$operation" in
@@ -165,22 +134,25 @@ case "$operation" in
 esac
 
 resolve_runtime
-stop_buzz
+if pgrep -f "$buzz_app/Contents/MacOS" >/dev/null 2>&1 || acp_processes_running; then
+    fail 'quit Buzz and finish its ACP sessions before changing the adapter'
+fi
 trap restore_automatically ERR
 
 if [[ "$operation" == 'deploy' ]]; then
     validate_deploy_tree
+    for member in package.json package-lock.json dist/index.js; do
+        cmp -s "$source_root/$member" "$deploy_tree/$member" || fail "runtime differs from the selected build: $member"
+    done
     backup_current_installation pre-deploy
 else
     prepare_rollback_tree
     backup_current_installation pre-rollback
 fi
 
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    echo "backup_name=$backup_name" >> "$GITHUB_OUTPUT"
-fi
+echo "backup_name=$backup_name"
 
 install_tree
-start_buzz
 automatic_rollback=''
 trap - ERR
+echo 'installation verified; Buzz can now be opened by the operator'
