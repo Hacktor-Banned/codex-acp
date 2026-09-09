@@ -118,7 +118,18 @@ the selected build, preserves the complete previous package under Buzz's
 `adapter-backups/codex-acp`, and reports the backup name, installed version and
 bundle SHA256. On installation failure it restores the previous package. Open
 Buzz normally after success and verify the real ACP client before retiring the
-old runner. No authentication or application data is replaced.
+old runner. Opening Buzz can start configured agents; a bounded ACP session
+against the installed bundle also verifies the client without launching them.
+No authentication or application data is replaced.
+
+The Studio's current Codex configuration requires its installed Codex CLI; the
+bundled 0.148.0 cannot parse `features.context_management.experimental_mode`.
+In Buzz's existing global agent environment, `CODEX_PATH=codex` selects the
+host's CLI through Buzz's PATH (which starts with `~/.local/bin`). Preserve all
+other settings and keep a copy of the previous global configuration before
+changing this field. Verify session creation and a read-only prompt with that
+environment. This setting requires `codex` on every affected host; clear or
+override it before deploying an agent to a host without a compatible CLI.
 
 To roll back, quit Buzz and use a fresh staging directory plus the reported
 backup name. The current installation is retained as another backup:
